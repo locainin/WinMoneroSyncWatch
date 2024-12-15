@@ -8,8 +8,6 @@ This project was created because there wasn't a reliable and user-friendly Moner
 
 ## Features
 
-- Real-time sync progress with a hacker-style display.
-- Displays:
   - Current sync percentage.
   - Synced and total block heights.
   - Remaining blocks.
@@ -58,3 +56,9 @@ You will be prompted to enter:
   - Enter the path to save stalled sync logs
 
 **These paths will be saved to sync_config.json for any future runs.**
+
+## Screenshot Example
+![Sync Progress Display](images/ExampleOutput.png)
+
+## Troubleshooting
+  - Ensure your Monero daemon (`monerod`) is running and the log file exists at the specified path.
