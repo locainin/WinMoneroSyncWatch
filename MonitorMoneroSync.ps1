@@ -1,7 +1,6 @@
 param (
     [string]$LogFilePath,
-    [string]$StallLogFilePath,
-    [int]$SyncTimeoutInSeconds = 300  # Default: 5 minutes
+    [string]$StallLogFilePath
 )
 
 # Path to the configuration file
@@ -35,11 +34,9 @@ function Load-Config {
 $savedConfig = Load-Config
 
 # Use saved paths if available; otherwise, prompt the user
-if ($savedConfig -and (-not $LogFilePath)) {
-    $LogFilePath = $savedConfig.LogFilePath
-}
-if ($savedConfig -and (-not $StallLogFilePath)) {
-    $StallLogFilePath = $savedConfig.StallLogFilePath
+if ($savedConfig -ne $null) {
+    if (-not $LogFilePath) { $LogFilePath = $savedConfig.LogFilePath }
+    if (-not $StallLogFilePath) { $StallLogFilePath = $savedConfig.StallLogFilePath }
 }
 
 # Prompt user for log file path if not already set
@@ -81,6 +78,7 @@ function NotifyStalledSync {
         [int]$CurrentHeight,
         [int]$BlocksRemaining
     )
+    if ($CurrentHeight -eq 0) { $CurrentHeight = "Unknown" }
     $stalledMessage = "Syncing has stalled at height $CurrentHeight with $BlocksRemaining blocks remaining."
     Write-Host $stalledMessage -ForegroundColor Red
     Add-Content -Path $StallLogFilePath -Value "$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) - $stalledMessage"
@@ -88,10 +86,9 @@ function NotifyStalledSync {
 
 # Function to monitor Monero sync logs and notify if stalled
 function MonitorMoneroSync {
-    $previousSyncPercentage = -1  # Track the last percentage
-    $spinnerSymbols = @('|', '/', '-', '\')  # Spinner for dynamic effect
-    $spinnerIndex = 0  # Spinner index
-    $lastSyncUpdateTime = Get-Date  # Record the time of the last sync progress
+    $previousHeight = 0  # Track the last sync height
+    $previousSyncPercentage = -1  # Track the last sync percentage
+    $lastHeightUpdateTime = Get-Date  # Track the last time the height updated
     $fullySynced = $false           # Track if we've completed the initial full sync
 
     Get-Content $LogFilePath -Wait | ForEach-Object {
@@ -102,7 +99,7 @@ function MonitorMoneroSync {
             $fullySynced = $true
             Write-Host "`nFully Synced! Your Monero node is now up-to-date with the network." -ForegroundColor Green
             Write-Host "Switching to monitoring mode to watch for new blocks..." -ForegroundColor Cyan
-            $lastSyncUpdateTime = Get-Date
+            $lastHeightUpdateTime = Get-Date
         }
 
         # If not fully synced, check for sync progress
@@ -114,33 +111,31 @@ function MonitorMoneroSync {
             $estimatedTimeLeft = [double]$Matches[5]
             $timeUnit = $Matches[6]
 
-            # Update the last sync update time
-            $lastSyncUpdateTime = Get-Date
+            # If height has not changed since the last update, consider the sync as stalled
+            if ($currentHeight -eq $previousHeight) {
+                NotifyStalledSync $currentHeight $blocksRemaining
+            } else {
+                $previousHeight = $currentHeight
+            }
 
-            # Only display output if the percentage has increased
+            # Only display the new percentage if it's increased
             if ($syncPercentage -gt $previousSyncPercentage) {
-                $previousSyncPercentage = $syncPercentage
-                Write-Host -NoNewline ("$($spinnerSymbols[$spinnerIndex % $spinnerSymbols.Length]) ") -ForegroundColor Yellow
                 Write-Host -NoNewline ("[ $syncPercentage% ] ") -ForegroundColor Green
                 Write-Host -NoNewline ("Height: $currentHeight / $totalHeight - Remaining: $blocksRemaining blocks ") -ForegroundColor Red
                 Write-Host ("- ETA: $estimatedTimeLeft $timeUnit") -ForegroundColor Cyan
-                $spinnerIndex++
+                $previousSyncPercentage = $syncPercentage  # Update the previous sync percentage    
             }
+
+            # Update the last height update time
+            $lastHeightUpdateTime = Get-Date
         }
 
-        # Monitoring mode: Watch for new blocks arriving
+        # Monitoring mode: Watch for new blocks arriving (fully synced mode)
         if ($fullySynced -and $line -match 'Synced (\d+)/(\d+)') {
             $currentHeight = [int]$Matches[1]
             $totalHeight = [int]$Matches[2]
             Write-Host "New block detected: Height $currentHeight / $totalHeight" -ForegroundColor Green
-            $lastSyncUpdateTime = Get-Date  # Reset timeout
-        }
-
-        # Check if syncing (or monitoring) has stalled
-        $timeSinceLastUpdate = (Get-Date) - $lastSyncUpdateTime
-        if ($timeSinceLastUpdate.TotalSeconds -gt $SyncTimeoutInSeconds) {
-            NotifyStalledSync $currentHeight 0
-            $lastSyncUpdateTime = Get-Date  # Prevent duplicate notifications
+            $lastHeightUpdateTime = Get-Date  # Reset monitoring time
         }
     }
 }
